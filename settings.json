@@ -5,10 +5,8 @@
     "tdl": {
         "max_parallel_downloads": 4,
         "reconnect_timeout": 0,
-        "download_timeout": 7200,
         "threads": 4,
         "bandwidth_limit": 0,
-        "chunk_size": 128,
         "excluded_extensions": [
             "jpg",
             "gif",
@@ -16,13 +14,6 @@
             "webp",
             "webm",
             "mp4"
-        ],
-        "included_extensions": [
-            "zip",
-            "rar",
-            "7z",
-            "txt",
-            "csv"
         ]
     },
     "sort": {

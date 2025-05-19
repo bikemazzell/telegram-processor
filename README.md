@@ -52,7 +52,6 @@ python telegram_processor.py --input <input_file.csv> --start <DD-MM-YYYY> --end
 - `--output-dir`: Output directory for processed files (default: ./output)
 - `--download-dir`: Directory for downloaded files (default: ./downloads)
 - `--settings`: Path to settings JSON file (default: ./settings.json)
-- `--session`: Path to TDL session file for authentication (default: <download_dir>/tdl_session.json)
 - `--verbose`: Show detailed output including tdl commands
 - `--process-only`: Skip download phase and only process existing files
 - `--auto-clean`: Automatically clean up after processing without prompting
@@ -83,7 +82,6 @@ The `settings.json` file controls various aspects of the script's behavior:
     "tdl": {
         "max_parallel_downloads": 4,
         "reconnect_timeout": 0,
-        "download_timeout": 7200,
         "threads": 4,
         "bandwidth_limit": 0,
         "chunk_size": 128,
@@ -119,12 +117,9 @@ The `settings.json` file controls various aspects of the script's behavior:
 #### tdl
 - `max_parallel_downloads`: Maximum number of parallel downloads
 - `reconnect_timeout`: Timeout for reconnecting to Telegram
-- `download_timeout`: Maximum time (seconds) for a single download
 - `threads`: Thread count for export operations
 - `bandwidth_limit`: Limit bandwidth usage in KiB/s (0 means unlimited)
-- `chunk_size`: Size of download chunks in KiB
-- `excluded_extensions`: File extensions to skip when downloading
-- `included_extensions`: File extensions to specifically include (prioritized)
+- `excluded_extensions`: File extensions to skip when downloading (e.g. jpg, gif, png, webp, webm, mp4)
 
 #### sort
 - `memory_percent`: Percentage of memory to use for sorting
@@ -137,16 +132,15 @@ The `settings.json` file controls various aspects of the script's behavior:
 
 ## Processing Workflow
 
-1. **Authentication**: The script uses TDL's session file for persistent authentication
-2. **Download Phase**: The script downloads files from the specified Telegram channels sequentially
-3. **Deduplication**: Files are deduplicated across all channels 
-4. **Extraction**: Archive files are extracted, respecting provided passwords
-5. **Post-Extraction Deduplication**: Files are deduplicated after extraction
-6. **Processing**: 
+1. **Download Phase**: The script downloads files from the specified Telegram channels sequentially
+2. **Deduplication**: Files are deduplicated across all channels 
+3. **Extraction**: Archive files are extracted, respecting provided passwords
+4. **Post-Extraction Deduplication**: Files are deduplicated after extraction
+5. **Processing**: 
    - Text files are combined, sorted, and deduplicated
    - Stealer logs are processed if archives are present
-7. **Output**: Processed files are moved to the output directory
-8. **Cleanup**: Temporary directories are removed (with user confirmation or auto-clean)
+6. **Output**: Processed files are moved to the output directory
+7. **Cleanup**: Temporary directories are removed (with user confirmation or auto-clean)
 
 ## Output Files
 

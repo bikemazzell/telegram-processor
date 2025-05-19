@@ -196,7 +196,6 @@ class TelegramProcessor:
         output_dir: Optional[str | Path] = None,
         download_dir: Optional[str | Path] = None,
         settings_file: Optional[str | Path] = None,
-        session_file: Optional[str | Path] = None,
         verbose: bool = False,
         process_only: bool = False,
         auto_clean: bool = False,
@@ -211,7 +210,6 @@ class TelegramProcessor:
             output_dir: Optional output directory for processed files
             download_dir: Optional directory for downloaded files
             settings_file: Optional path to settings file
-            session_file: Optional path to TDL session file for authentication
             verbose: Whether to show detailed output
             process_only: Whether to skip download phase and only process existing files
             auto_clean: Whether to automatically clean up without prompting
@@ -240,17 +238,6 @@ class TelegramProcessor:
             self.downloads_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             raise ProcessingError(f"Failed to create required directories: {e}")
-
-        # Session file handling
-        if session_file:
-            self.session_file = Path(session_file)
-        else:
-            # Use default session file in downloads directory if it exists
-            default_session = self.downloads_dir / "tdl_session.json"
-            self.session_file = default_session if default_session.exists() else None
-            
-        if self.session_file and not self.session_file.exists():
-            logger.warning(f"Session file {self.session_file} not found, TDL will create a new session")
 
         self.channels: List[ChannelConfig] = []
         self.settings = Settings(settings_file)
@@ -418,11 +405,6 @@ class TelegramProcessor:
         channel_dir = self.downloads_dir / channel.name
         export_file = channel_dir / "tdl-export.json"
 
-        # Define default session path if not specified
-        if not self.session_file:
-            self.session_file = self.downloads_dir / "tdl_session.json"
-            logger.info(f"Using default session file at {self.session_file}")
-
         try:
             # Ensure channel directory exists for export file
             channel_dir.mkdir(parents=True, exist_ok=True)
@@ -439,9 +421,7 @@ class TelegramProcessor:
                 "-o",
                 str(export_file),
                 "-t",
-                str(self.settings.get("tdl", "threads", default=4)),
-                "--session",
-                str(self.session_file)
+                str(self.settings.get("tdl", "threads", default=4))
             ]
 
             # Run export
@@ -483,74 +463,73 @@ class TelegramProcessor:
                 "--skip-same",
                 "-d",
                 str(channel_dir),
-                "--continue",
-                "--session",
-                str(self.session_file)
+                "--continue"
             ]
                 
             # Add bandwidth limit if specified and not zero
             bandwidth_limit = self.settings.get("tdl", "bandwidth_limit", default=0)
             if bandwidth_limit > 0:
                 dl_cmd.extend(["--limit", str(bandwidth_limit)])
-                
-            # Add chunk size parameter
-            chunk_size = self.settings.get("tdl", "chunk_size", default=128)
-            dl_cmd.extend(["--chunk-size", str(chunk_size)])
 
-            # Process extensions for includes/excludes
+            # Process extensions to exclude
             excluded_extensions = self.settings.get("tdl", "excluded_extensions", default=[])
             if excluded_extensions:
                 # Process extensions to handle case variants
                 excluded_extensions = self.settings._prepare_extensions(excluded_extensions)
                 dl_cmd.extend(["-e", ",".join(excluded_extensions)])
-                
-            # Add included extensions if specified
-            included_extensions = self.settings.get("tdl", "included_extensions", default=[])
-            if included_extensions:
-                # Process extensions to handle case variants
-                included_extensions = self.settings._prepare_extensions(included_extensions)
-                dl_cmd.extend(["-i", ",".join(included_extensions)])
 
-            # Set download timeout if specified
-            download_timeout = self.settings.get("tdl", "download_timeout", default=7200)
-            dl_cmd.extend(["--timeout", str(download_timeout)])
+            # Run download with proper error handling
+            try:
+                if self.verbose:
+                    logger.info("Running command: %s", " ".join(dl_cmd))
+                    process = subprocess.run(
+                        dl_cmd,
+                        check=True,
+                        text=True,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE
+                    )
+                    if process.stdout:
+                        logger.info("Download output:\n%s", process.stdout)
+                else:
+                    subprocess.run(dl_cmd, check=True, capture_output=True, text=True)
 
-            # Run download
-            if self.verbose:
-                logger.info("Running command: %s", " ".join(dl_cmd))
-                process = subprocess.run(
-                    dl_cmd,
-                    check=True,
-                    text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                # Verify downloads by checking the directory
+                downloaded_files = [
+                    f for f in channel_dir.iterdir()
+                    if f.is_file() and not f.name.endswith(".tmp") and f.name != "tdl-export.json"
+                ]
+
+                if not downloaded_files:
+                    logger.warning(
+                        "Download command completed but no files were found for channel %s", 
+                        channel.name
+                    )
+                    return False
+
+                logger.info(
+                    "Successfully downloaded %d files for channel %s",
+                    len(downloaded_files),
+                    channel.name
                 )
-                if process.stdout:
-                    logger.info("Download output:\n%s", process.stdout)
-            else:
-                subprocess.run(dl_cmd, check=True, capture_output=True, text=True)
+                return True
 
-            # Check if any files were downloaded
-            has_files = any(
-                f.is_file()
-                and not f.name.endswith(".tmp")
-                and f.name != "tdl-export.json"
-                for f in channel_dir.iterdir()
-            )
-
-            if not has_files:
-                logger.warning(
-                    "Download completed but no files found for channel %s", channel.name
-                )
+            except subprocess.CalledProcessError as e:
+                error_msg = f"Download failed for channel {channel.name}"
+                if e.stderr:
+                    error_msg += f": {e.stderr}"
+                logger.error(error_msg)
                 return False
 
-            return True
-
         except subprocess.CalledProcessError as e:
-            error_msg = f"Failed to download channel {channel.name}"
-            if self.verbose and e.stderr:
+            error_msg = f"Failed to export channel {channel.name}"
+            if e.stderr:
                 error_msg += f": {e.stderr}"
-            raise ProcessingError(error_msg)
+            logger.error(error_msg)
+            return False
+        except Exception as e:
+            logger.error("Unexpected error downloading channel %s: %s", channel.name, str(e))
+            return False
         finally:
             # Clean up export file if it exists outside channel directory
             if Path("tdl-export.json").exists():
@@ -1133,7 +1112,6 @@ def main() -> None:
     parser.add_argument("--output-dir", help="Output directory for processed files")
     parser.add_argument("--download-dir", help="Directory for downloaded files")
     parser.add_argument("--settings", help="Path to settings JSON file")
-    parser.add_argument("--session", help="Path to TDL session file for authentication")
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -1168,7 +1146,6 @@ def main() -> None:
             output_dir=args.output_dir,
             download_dir=args.download_dir,
             settings_file=args.settings,
-            session_file=args.session,
             verbose=args.verbose,
             process_only=args.process_only,
             auto_clean=args.auto_clean,
