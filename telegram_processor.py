@@ -427,13 +427,9 @@ class TelegramProcessor:
             # Run export
             if self.verbose:
                 logger.info("Running command: %s", " ".join(export_cmd))
-                result = subprocess.run(
-                    export_cmd, check=True, capture_output=True, text=True
-                )
-                if result.stdout:
-                    logger.info("Export output:\n%s", result.stdout)
-            else:
-                subprocess.run(export_cmd, check=True, capture_output=True, text=True)
+            
+            # Run without capturing output to show progress in real-time
+            subprocess.run(export_cmd, check=True, text=True)
 
             # Parse export file to get expected files
             expected_files = self.parse_export_file(channel)
@@ -482,17 +478,9 @@ class TelegramProcessor:
             try:
                 if self.verbose:
                     logger.info("Running command: %s", " ".join(dl_cmd))
-                    process = subprocess.run(
-                        dl_cmd,
-                        check=True,
-                        text=True,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE
-                    )
-                    if process.stdout:
-                        logger.info("Download output:\n%s", process.stdout)
-                else:
-                    subprocess.run(dl_cmd, check=True, capture_output=True, text=True)
+                
+                # Run without capturing output to show progress in real-time
+                subprocess.run(dl_cmd, check=True, text=True)
 
                 # Verify downloads by checking the directory
                 downloaded_files = [
@@ -516,7 +504,7 @@ class TelegramProcessor:
 
             except subprocess.CalledProcessError as e:
                 error_msg = f"Download failed for channel {channel.name}"
-                if e.stderr:
+                if hasattr(e, 'stderr') and e.stderr:
                     error_msg += f": {e.stderr}"
                 logger.error(error_msg)
                 return False
