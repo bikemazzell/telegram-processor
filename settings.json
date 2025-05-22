@@ -3,9 +3,9 @@
         "path": "/path/to/stealer-log-processor/main.py"
     },
     "tdl": {
-        "max_parallel_downloads": 4,
+        "max_parallel_downloads": 1,
         "reconnect_timeout": 0,
-        "threads": 4,
+        "export_channel_threads": 4,
         "bandwidth_limit": 0,
         "excluded_extensions": [
             "jpg",

@@ -110,10 +110,10 @@ class Settings:
         return {
             "stealer_log_processor": {"path": "./stealer-log-processor/main.py"},
             "tdl": {
-                "max_parallel_downloads": 4,
+                "max_parallel_downloads": 1,
                 "reconnect_timeout": 0,
                 "download_timeout": 7200,
-                "threads": 4,
+                "export_channel_threads": 4,
                 "bandwidth_limit": 0,  # 0 means unlimited
                 "chunk_size": 128,  # in KB
                 "excluded_extensions": [
@@ -421,7 +421,7 @@ class TelegramProcessor:
                 "-o",
                 str(export_file),
                 "-t",
-                str(self.settings.get("tdl", "threads", default=4))
+                str(self.settings.get("tdl", "export_channel_threads", default=4))
             ]
 
             # Run export

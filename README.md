@@ -80,9 +80,9 @@ The `settings.json` file controls various aspects of the script's behavior:
         "path": "/path/to/stealer-log-processor/main.py"
     },
     "tdl": {
-        "max_parallel_downloads": 4,
+        "max_parallel_downloads": 1,
         "reconnect_timeout": 0,
-        "threads": 4,
+        "export_channel_threads": 4,
         "bandwidth_limit": 0,
         "chunk_size": 128,
         "excluded_extensions": [
@@ -117,7 +117,7 @@ The `settings.json` file controls various aspects of the script's behavior:
 #### tdl
 - `max_parallel_downloads`: Maximum number of parallel downloads
 - `reconnect_timeout`: Timeout for reconnecting to Telegram
-- `threads`: Thread count for export operations
+- `export_channel_threads`: Thread count for export operations
 - `bandwidth_limit`: Limit bandwidth usage in KiB/s (0 means unlimited)
 - `excluded_extensions`: File extensions to skip when downloading (e.g. jpg, gif, png, webp, webm, mp4)
 
