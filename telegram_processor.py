@@ -295,6 +295,10 @@ class RetryMixin:
 class TelegramProcessor(RetryMixin):
     """Main processor for Telegram channels."""
 
+    CHECKPOINT_FILE = ".processing_checkpoint.json"
+    EXPORT_FILE = "tdl-export.json"
+    DEDUPLICATION_FILE = "results.txt"
+
     def __init__(
         self,
         input_file: str | Path,
@@ -352,7 +356,7 @@ class TelegramProcessor(RetryMixin):
         
         # Track processing state
         self.processed_channels: Dict[str, bool] = {}
-        self.checkpoint_file = self.downloads_dir / ".processing_checkpoint.json"
+        self.checkpoint_file = self.downloads_dir / self.CHECKPOINT_FILE
 
     def check_dependencies(self) -> None:
         """
@@ -369,14 +373,7 @@ class TelegramProcessor(RetryMixin):
         
         missing_tools = []
         for tool, description in required_tools.items():
-            try:
-                subprocess.run(
-                    ["which", tool], 
-                    check=True, 
-                    capture_output=True,
-                    text=True
-                )
-            except subprocess.CalledProcessError:
+            if not shutil.which(tool):
                 missing_tools.append(f"{tool}: {description}")
         
         if missing_tools:
@@ -512,7 +509,7 @@ class TelegramProcessor(RetryMixin):
         Returns:
             List of filenames to be downloaded
         """
-        export_file = self.downloads_dir / channel.name / "tdl-export.json"
+        export_file = self.downloads_dir / channel.name / self.EXPORT_FILE
         try:
             with open(export_file, "r", encoding="utf-8") as f:
                 export_data = json.load(f)
@@ -563,7 +560,7 @@ class TelegramProcessor(RetryMixin):
 
         # Setup channel directory path
         channel_dir = self.downloads_dir / channel.name
-        export_file = channel_dir / "tdl-export.json"
+        export_file = channel_dir / self.EXPORT_FILE
 
         try:
             # Ensure channel directory exists for export file
@@ -678,8 +675,9 @@ class TelegramProcessor(RetryMixin):
             raise
         finally:
             # Clean up export file if it exists outside channel directory
-            if Path("tdl-export.json").exists():
-                Path("tdl-export.json").unlink()
+            root_export_file = Path(self.EXPORT_FILE)
+            if root_export_file.exists():
+                root_export_file.unlink()
 
     def download_channel_wrapper(self, channel: ChannelConfig) -> Tuple[ChannelConfig, bool, Optional[str]]:
         """
@@ -962,7 +960,7 @@ class TelegramProcessor(RetryMixin):
         except subprocess.CalledProcessError as e:
             logger.error("Failed to deduplicate files: %s", e.stderr)
         finally:
-            results_file = directory / "results.txt"
+            results_file = directory / self.DEDUPLICATION_FILE
             if results_file.exists():
                 results_file.unlink()
 
