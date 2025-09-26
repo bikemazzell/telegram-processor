@@ -21,7 +21,7 @@ import subprocess
 import sys
 import time
 import tempfile
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -638,11 +638,49 @@ class TelegramProcessor(RetryMixin):
             if self.verbose:
                 logger.info("Running command: %s", " ".join(dl_cmd))
             
-            # Capture output to prevent interference with tqdm
-            dl_result = subprocess.run(dl_cmd, check=True, capture_output=True, text=True, errors='replace')
-            if self.verbose and dl_result.stderr:
-                # tdl sends progress and info to stderr
-                logger.info("tdl download output for %s:\n%s", channel.name, dl_result.stderr.strip())
+            # Show real-time progress by not capturing output
+            logger.info("Starting download of %d files for channel %s...", len(expected_files), channel.name)
+            
+            # Track download progress by monitoring the directory
+            initial_files = set(
+                f.name for f in channel_dir.iterdir() 
+                if f.is_file() and not f.name.endswith(".tmp") and f.name != "tdl-export.json"
+            )
+            
+            try:
+                # Run the download process without capturing output to show real-time progress
+                process = subprocess.Popen(dl_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, 
+                                         text=True, bufsize=1, universal_newlines=True)
+                
+                # Stream output line by line to show progress
+                while True:
+                    output = process.stdout.readline()
+                    if output == '' and process.poll() is not None:
+                        break
+                    if output:
+                        # Print tdl's progress output directly
+                        print(output.strip())
+                        
+                        # Check for specific progress indicators from tdl
+                        if "downloading" in output.lower() or "progress" in output.lower():
+                            # Count files downloaded so far
+                            current_files = set(
+                                f.name for f in channel_dir.iterdir()
+                                if f.is_file() and not f.name.endswith(".tmp") and f.name != "tdl-export.json"
+                            )
+                            new_files = current_files - initial_files
+                            if new_files:
+                                logger.info("Downloaded %d/%d files for channel %s", 
+                                          len(new_files), len(expected_files), channel.name)
+                
+                # Wait for process to complete and check return code
+                return_code = process.wait()
+                if return_code != 0:
+                    raise subprocess.CalledProcessError(return_code, dl_cmd)
+                    
+            except subprocess.CalledProcessError as e:
+                logger.error("Download failed for %s with exit code %d", channel.name, e.returncode)
+                raise
 
             # Verify downloads by checking the directory
             downloaded_files = [
@@ -752,12 +790,11 @@ class TelegramProcessor(RetryMixin):
                 if self._extract_archive_impl(archive_path, password):
                     return True
                 if attempt < max_retries - 1:
-                    retry_delay = self.settings.get("archive", "retry_delay", default=2)
-                    logger.warning(
-                        "Extraction failed for %s, retrying (%d/%d) in %d seconds...",
-                        archive_path.name, attempt + 1, max_retries, retry_delay
-                    )
-                    time.sleep(retry_delay)
+                    if self.verbose:
+                        logger.warning(
+                            "Extraction failed for %s, retrying (%d/%d)...",
+                            archive_path.name, attempt + 1, max_retries
+                        )
             except Exception as e:
                 if attempt == max_retries - 1:
                     logger.error(
@@ -784,7 +821,10 @@ class TelegramProcessor(RetryMixin):
         
         try:
             # Base command
-            base_cmd = ["7z", "x", str(archive_path.name), "-aoa"]
+            # -y: assume yes to all queries
+            # -aoa: overwrite all existing files
+            # -bd: disable progress indicator
+            base_cmd = ["7z", "x", str(archive_path.name), "-aoa", "-y", "-bd"]
 
             # Add patterns
             for pattern in patterns:
@@ -807,6 +847,7 @@ class TelegramProcessor(RetryMixin):
             with self.managed_process(
                 base_cmd,
                 cwd=archive_path.parent,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -856,6 +897,7 @@ class TelegramProcessor(RetryMixin):
         """
         Extract archives from channel directory. Tries all provided passwords,
         and if all fail, attempts extraction without a password.
+        Uses parallel processing for faster extraction.
 
         Args:
             channel: Channel configuration
@@ -870,52 +912,75 @@ class TelegramProcessor(RetryMixin):
         if not archive_files:
             return True  # No archives is considered success
 
-        success_count = 0
         total_count = len(archive_files)
-
-        for archive in archive_files:
+        max_workers = self.settings.get("archive", "max_parallel_extractions", default=4)
+        
+        # Limit workers to the number of archives if we have fewer archives
+        actual_workers = min(max_workers, total_count)
+        
+        if actual_workers > 1:
             logger.info(
-                "Processing archive %s for channel %s", archive.name, channel.name
+                "Starting parallel extraction with %d workers for %d archives in channel %s",
+                actual_workers, total_count, channel.name
             )
-
-            extracted = False
+        
+        def extract_archive_with_passwords(archive_path: Path) -> Tuple[Path, bool, Optional[str]]:
+            """
+            Extract a single archive trying all passwords.
+            Returns: (archive_path, success, password_used)
+            """
+            if self.verbose:
+                logger.info("Processing archive %s", archive_path.name)
+            
             # Try extraction with passwords if provided
             if channel.has_passwords:
-                if self.verbose:
-                    logger.info(
-                        "Attempting extraction with %d password(s) for %s",
-                        len(channel.passwords),
-                        archive.name,
-                    )
                 for password in channel.passwords:
-                    if self.extract_single_archive(archive, password):
-                        logger.info("Successfully extracted %s with a provided password", archive.name)
-                        extracted = True
-                        break  # Move to the next archive
+                    if self.extract_single_archive(archive_path, password):
+                        return (archive_path, True, password)
+            
+            # Try without password
+            if self.extract_single_archive(archive_path):
+                return (archive_path, True, None)
+            
+            return (archive_path, False, None)
+        
+        # Process archives in parallel using ThreadPoolExecutor
+        success_count = 0
+        failed_archives = []
+        
+        with ThreadPoolExecutor(max_workers=actual_workers) as executor:
+            # Submit all extraction tasks
+            futures = {executor.submit(extract_archive_with_passwords, archive): archive 
+                      for archive in archive_files}
+            
+            # Process results as they complete
+            for future in as_completed(futures):
+                archive_path, success, password_used = future.result()
+                
+                if success:
+                    success_count += 1
+                    if self.verbose:
+                        if password_used:
+                            logger.info("Successfully extracted %s with password", archive_path.name)
+                        else:
+                            logger.info("Successfully extracted %s without password", archive_path.name)
+                else:
+                    failed_archives.append(archive_path.name)
+                    if self.verbose:
+                        logger.warning("Failed to extract %s with any method", archive_path.name)
 
-            # If not extracted (either no passwords or passwords failed), try without a password
-            if not extracted:
-                if self.verbose:
-                    logger.info("Attempting extraction without password for %s", archive.name)
-                if self.extract_single_archive(archive):
-                    logger.info("Successfully extracted %s without a password", archive.name)
-                    extracted = True
-
-            if extracted:
-                success_count += 1
-            else:
-                logger.warning("Failed to extract %s with any method", archive.name)
-
+        # Report results
         if success_count == 0 and total_count > 0:
             logger.error("Failed to extract any archives for channel %s", channel.name)
             return False
 
         if success_count < total_count:
             logger.warning(
-                "Extracted %d out of %d archives for channel %s",
+                "Extracted %d out of %d archives for channel %s (failed: %s)",
                 success_count,
                 total_count,
                 channel.name,
+                ", ".join(failed_archives[:5]) + ("..." if len(failed_archives) > 5 else "")
             )
         else:
             logger.info(
