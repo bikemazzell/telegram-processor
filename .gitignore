@@ -4,5 +4,6 @@ __pycache__/
 .ruff_cache/
 .codex
 .serena/
+channels.csv
 channels-ori.csv
 logs/
