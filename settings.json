@@ -1,12 +1,14 @@
 {
     "stealer_log_processor": {
-        "path": "/path/to/stealer-log-processor/main.py"
+        "path": "./stealer-log-processor/main.py"
     },
     "tdl": {
         "max_parallel_downloads": 1,
         "reconnect_timeout": 0,
+        "download_timeout": 7200,
         "export_channel_threads": 4,
         "bandwidth_limit": 0,
+        "chunk_size": 128,
         "excluded_extensions": [
             "jpg",
             "gif",
@@ -14,12 +16,22 @@
             "webp",
             "webm",
             "mp4"
-        ]
+        ],
+        "included_extensions": [
+            "zip",
+            "rar",
+            "7z",
+            "txt",
+            "csv"
+        ],
+        "max_retries": 3,
+        "retry_delay": 5
     },
     "sort": {
         "memory_percent": 30,
         "max_parallel": 16,
-        "temp_dir": "/tmp"
+        "temp_dir": "/tmp",
+        "chunk_size": 1000000
     },
     "archive": {
         "extract_patterns": [
@@ -28,6 +40,29 @@
             "*pass*",
             "*auto*"
         ],
-        "extract_timeout": 3600
+        "supported_extensions": [".zip", ".rar", ".7z"],
+        "extract_timeout": 300,
+        "max_retries": 2,
+        "retry_delay": 2,
+        "max_parallel_extractions": 4
+    },
+    "processing": {
+        "max_workers": null,
+        "checkpoint_interval": 100,
+        "min_file_size_bytes": 0,
+        "min_result_file_size_bytes": 1
+    },
+    "logging": {
+        "max_file_size_mb": 10,
+        "backup_count": 5,
+        "temp_cleanup_patterns": [
+            "tdl-export*.json",
+            "*.temp",
+            "sort*"
+        ]
+    },
+    "subprocess": {
+        "default_timeout": 300,
+        "terminate_timeout": 5
     }
 } 
