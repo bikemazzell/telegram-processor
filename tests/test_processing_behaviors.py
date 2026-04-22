@@ -30,6 +30,46 @@ def test_parse_export_file_returns_only_messages_with_files(processor: TelegramP
     assert processor.parse_export_file(channel) == ["one.zip", "two.txt"]
 
 
+def test_extract_password_from_post_text_supports_pass_variants(processor: TelegramProcessor) -> None:
+    assert processor.extract_password_from_post_text("Password: @OnlyLogsCloud") == "@OnlyLogsCloud"
+    assert processor.extract_password_from_post_text("pass: 123") == "123"
+    assert processor.extract_password_from_post_text("Password FULL LOGS - @BurnCloudLogs") == "@BurnCloudLogs"
+
+
+def test_extract_password_from_post_text_ignores_unlabeled_links(processor: TelegramProcessor) -> None:
+    text = "Reserve Channel https://t.me/OnlyLogsCloud || Actual Link https://t.me/+abc123"
+    assert processor.extract_password_from_post_text(text) is None
+
+
+def test_build_post_password_map_uses_same_message_text(processor: TelegramProcessor, channel: ChannelConfig) -> None:
+    export_file = processor.downloads_dir / channel.name / processor.EXPORT_FILE
+    export_file.parent.mkdir(parents=True, exist_ok=True)
+    export_file.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {
+                        "type": "message",
+                        "file": "one.zip",
+                        "text": "Password: @OnlyLogsCloud",
+                    },
+                    {
+                        "type": "message",
+                        "file": "two.zip",
+                        "text": "Reserve Channel https://t.me/OnlyLogsCloud",
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    channel.password_source = "password_in_post"
+
+    password_map = processor.build_post_password_map(channel)
+
+    assert password_map == {"one.zip": "@OnlyLogsCloud"}
+
+
 def test_get_archive_files_respects_supported_extensions(processor: TelegramProcessor, channel: ChannelConfig) -> None:
     (channel.working_dir / "one.zip").write_text("a", encoding="utf-8")
     (channel.working_dir / "two.RAR").write_text("a", encoding="utf-8")
@@ -162,6 +202,45 @@ def test_extract_archives_tries_passwords_then_falls_back(
 
     assert processor.extract_archives(channel) is True
     assert attempts == ["secret", None]
+
+
+def test_extract_archives_uses_password_from_post_text_and_ignores_static_passwords(
+    processor: TelegramProcessor,
+    channel: ChannelConfig,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive_path = channel.working_dir / "loot.zip"
+    archive_path.write_text("zip", encoding="utf-8")
+    export_file = processor.downloads_dir / channel.name / processor.EXPORT_FILE
+    export_file.parent.mkdir(parents=True, exist_ok=True)
+    export_file.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {
+                        "type": "message",
+                        "file": "loot.zip",
+                        "text": "Password: @OnlyLogsCloud",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    channel.password_source = "password_in_post"
+    channel.passwords = ["should-be-ignored"]
+
+    attempts: list[str | None] = []
+
+    def fake_extract(current_archive: Path, password: str | None = None) -> bool:
+        attempts.append(password)
+        return password == "@OnlyLogsCloud"
+
+    monkeypatch.setattr(processor, "extract_single_archive", fake_extract)
+    monkeypatch.setitem(processor.settings.settings["archive"], "max_parallel_extractions", 1)
+
+    assert processor.extract_archives(channel) is True
+    assert attempts == ["@OnlyLogsCloud"]
 
 
 def test_download_channel_builds_expected_commands(

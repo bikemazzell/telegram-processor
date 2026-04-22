@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 
 from telegram_processor_lib import (
+    ChannelChecker,
     ChannelConfig,
     ProcessingError,
     Settings,
@@ -21,6 +22,7 @@ from telegram_processor_lib import (
 )
 
 __all__ = [
+    "ChannelChecker",
     "ChannelConfig",
     "ProcessingError",
     "Settings",
@@ -39,8 +41,8 @@ def main() -> None:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--input", required=True, help="Input CSV file with channel configurations")
-    parser.add_argument("--start", required=True, help="Start date (DD-MM-YYYY)")
-    parser.add_argument("--end", required=True, help="End date (DD-MM-YYYY)")
+    parser.add_argument("--start", help="Start date (DD-MM-YYYY)")
+    parser.add_argument("--end", help="End date (DD-MM-YYYY)")
     parser.add_argument("--output-dir", help="Output directory for processed files")
     parser.add_argument("--download-dir", help="Directory for downloaded files")
     parser.add_argument("--settings", help="Path to settings JSON file")
@@ -58,6 +60,16 @@ def main() -> None:
         "--auto-clean",
         action="store_true",
         help="Automatically clean up after processing without prompting",
+    )
+    parser.add_argument(
+        "--check-channels",
+        action="store_true",
+        help="Validate configured channels and exit without downloading or processing",
+    )
+    parser.add_argument(
+        "--comment-missing",
+        action="store_true",
+        help="When used with --check-channels, comment out inactive rows in the input CSV",
     )
 
     args = parser.parse_args()
@@ -78,6 +90,15 @@ def main() -> None:
         logger.info("tqdm not available. Install it for progress bars: pip install tqdm")
 
     try:
+        if args.check_channels:
+            checker = ChannelChecker(input_file=args.input)
+            checker.run(comment_missing=args.comment_missing)
+            return
+
+        if not args.start or not args.end:
+            logger.error("--start and --end are required unless --check-channels is used")
+            sys.exit(1)
+
         try:
             start_epoch = datetime.strptime(args.start, "%d-%m-%Y").timestamp()
             end_epoch = datetime.strptime(args.end, "%d-%m-%Y").timestamp()

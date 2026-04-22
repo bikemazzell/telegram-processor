@@ -112,14 +112,29 @@ class BaseProcessorMixin:
                 if len(header) < 2 or header[0].strip().lower() != "name" or header[1].strip().lower() != "channel":
                     raise ProcessingError("CSV must start with 'name' and 'channel' columns")
 
+                normalized_header = [column.strip().lower() for column in header]
+                password_source_index = None
+                if "password_source" in normalized_header:
+                    password_source_index = normalized_header.index("password_source")
+
                 for row in reader:
                     if not row or not row[0] or not row[1]:
                         continue
 
+                    password_source = row[password_source_index] if password_source_index is not None and password_source_index < len(row) else None
+                    passwords = [
+                        value
+                        for index, value in enumerate(row[2:], start=2)
+                        if index != password_source_index
+                    ]
+                    if password_source and password_source.strip() == "password_in_post":
+                        passwords = []
+
                     channel = ChannelConfig(
                         name=row[0],
                         channel=row[1],
-                        passwords=row[2:] if len(row) > 2 else [],
+                        passwords=passwords,
+                        password_source=password_source,
                     )
                     self.channels.append(channel)
 

@@ -14,7 +14,13 @@ class ProcessingError(Exception):
 class ChannelConfig:
     """Configuration for a Telegram channel."""
 
-    def __init__(self, name: str, channel: str, passwords: Optional[List[str]] = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        channel: str,
+        passwords: Optional[List[str]] = None,
+        password_source: Optional[str] = None,
+    ) -> None:
         if not name or not name.strip():
             raise ValueError("Channel name cannot be empty")
         if not channel or not channel.strip():
@@ -22,12 +28,17 @@ class ChannelConfig:
 
         self.name: str = name.strip()
         self.channel: str = channel.strip()
+        self.password_source: Optional[str] = password_source.strip() if password_source and password_source.strip() else None
         self.passwords: List[str] = [p.strip() for p in passwords if p and p.strip()] if passwords else []
         self.working_dir: Optional[Path] = None
 
     @property
     def has_passwords(self) -> bool:
-        return bool(self.passwords)
+        return bool(self.passwords) and not self.uses_post_passwords
+
+    @property
+    def uses_post_passwords(self) -> bool:
+        return self.password_source == "password_in_post"
 
 
 class Settings:

@@ -17,6 +17,14 @@ def test_channel_config_trims_values_and_passwords() -> None:
     assert channel.has_passwords is True
 
 
+def test_channel_config_supports_password_source() -> None:
+    channel = ChannelConfig("chan", "@chan", ["secret"], password_source="password_in_post")
+
+    assert channel.password_source == "password_in_post"
+    assert channel.uses_post_passwords is True
+    assert channel.has_passwords is False
+
+
 def test_settings_missing_file_uses_defaults(tmp_path: Path) -> None:
     settings = Settings(tmp_path / "missing.json")
 
@@ -62,6 +70,29 @@ def test_load_channels_supports_multiple_password_columns(tmp_path: Path) -> Non
 
     assert len(processor.channels) == 1
     assert processor.channels[0].passwords == ["one", "two"]
+
+
+def test_load_channels_supports_password_source_column(tmp_path: Path) -> None:
+    input_file = tmp_path / "channels.csv"
+    input_file.write_text(
+        "name,channel,password_source,password1,password2\nchan,@chan,password_in_post,one,two\n",
+        encoding="utf-8",
+    )
+
+    processor = TelegramProcessor(
+        input_file=input_file,
+        start_date="1704067200",
+        end_date="1704153600",
+        output_dir=tmp_path / "output",
+        download_dir=tmp_path / "downloads",
+        settings_file=tmp_path / "settings.json",
+    )
+
+    processor.load_channels()
+
+    assert len(processor.channels) == 1
+    assert processor.channels[0].password_source == "password_in_post"
+    assert processor.channels[0].passwords == []
 
 
 def test_load_channels_rejects_invalid_header(tmp_path: Path) -> None:

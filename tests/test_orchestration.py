@@ -141,6 +141,8 @@ def test_main_invalid_date_exits_with_error(monkeypatch: pytest.MonkeyPatch, tmp
             "verbose": False,
             "process_only": True,
             "auto_clean": True,
+            "check_channels": False,
+            "comment_missing": False,
         },
     )()
 
@@ -248,6 +250,8 @@ def test_main_success_runs_full_lifecycle(monkeypatch: pytest.MonkeyPatch, tmp_p
             "verbose": False,
             "process_only": True,
             "auto_clean": True,
+            "check_channels": False,
+            "comment_missing": False,
         },
     )()
 
@@ -280,6 +284,8 @@ def test_main_processing_error_still_cleans_up(monkeypatch: pytest.MonkeyPatch, 
             "verbose": False,
             "process_only": True,
             "auto_clean": True,
+            "check_channels": False,
+            "comment_missing": False,
         },
     )()
 
@@ -404,3 +410,64 @@ def test_process_removes_checkpoint_after_mixed_processing_results(
 
     assert removed == [one_dir]
     assert not processor.checkpoint_file.exists()
+
+
+def test_process_handles_static_and_password_in_post_channels_in_one_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    input_file = tmp_path / "channels.csv"
+    input_file.write_text(
+        "name,channel,password_source,password\nstatic,@static,,secret\nfunnel,@funnel,password_in_post,ignored\n",
+        encoding="utf-8",
+    )
+
+    processor = TelegramProcessor(
+        input_file=input_file,
+        start_date="1704067200",
+        end_date="1704153600",
+        output_dir=tmp_path / "output",
+        download_dir=tmp_path / "downloads",
+        settings_file=tmp_path / "settings.json",
+        process_only=True,
+        auto_clean=True,
+        process_executor_cls=FakeExecutor,
+    )
+
+    static_dir = processor.downloads_dir / "static"
+    funnel_dir = processor.downloads_dir / "funnel"
+    static_dir.mkdir(parents=True)
+    funnel_dir.mkdir(parents=True)
+    (static_dir / "static.zip").write_text("zip", encoding="utf-8")
+    (funnel_dir / "funnel.zip").write_text("zip", encoding="utf-8")
+
+    export_file = processor.downloads_dir / "funnel" / processor.EXPORT_FILE
+    export_file.write_text(
+        '{"messages":[{"type":"message","file":"funnel.zip","text":"Password: @OnlyLogsCloud"}]}',
+        encoding="utf-8",
+    )
+
+    attempts: dict[str, list[str | None]] = {"static": [], "funnel": []}
+    removed: list[Path] = []
+
+    def fake_extract(channel: ChannelConfig) -> bool:
+        def record_password(current_archive: Path, password: str | None = None) -> bool:
+            attempts[channel.name].append(password)
+            return True
+
+        monkeypatch.setattr(processor, "extract_single_archive", record_password)
+        return processor.extract_archives(channel)
+
+    def fake_process_channel(channel: ChannelConfig) -> tuple[ChannelConfig, bool]:
+        fake_extract(channel)
+        return channel, True
+
+    monkeypatch.setattr(processor, "process_channel_files", fake_process_channel)
+    monkeypatch.setattr(processor, "remove_tree", lambda path: removed.append(path))
+    monkeypatch.setattr(workflow_module, "as_completed", lambda futures: futures)
+
+    processor.process()
+
+    assert attempts["static"] == ["secret"]
+    assert attempts["funnel"] == ["@OnlyLogsCloud"]
+    assert removed == [static_dir, funnel_dir]

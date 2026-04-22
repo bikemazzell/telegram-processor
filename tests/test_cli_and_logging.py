@@ -39,6 +39,8 @@ def test_main_process_only_does_not_require_tdl(monkeypatch: pytest.MonkeyPatch,
         verbose=False,
         process_only=True,
         auto_clean=True,
+        check_channels=False,
+        comment_missing=False,
     )
 
     monkeypatch.setattr(telegram_processor.argparse.ArgumentParser, "parse_args", lambda self: parsed_args)

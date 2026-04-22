@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import time
 from concurrent.futures import as_completed
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from .config import ChannelConfig
 from .logging_utils import logger
@@ -34,6 +36,87 @@ class RetryMixin:
 
 class DownloadMixin(RetryMixin):
     """Channel download and archive extraction behavior."""
+
+    def normalize_export_message_text(self, value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            parts: list[str] = []
+            for item in value:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+            return "".join(parts)
+        return ""
+
+    def extract_password_from_post_text(self, text: str) -> Optional[str]:
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            match = re.search(r"(?i)\bpass(?:word)?\b", line)
+            if not match:
+                continue
+
+            remainder = line[match.end():].strip()
+            if not remainder:
+                continue
+
+            delimiter_match = re.search(r"\s*[:=\-]\s*", remainder)
+            if delimiter_match:
+                candidate = remainder[delimiter_match.end():].strip()
+            else:
+                candidate = remainder.lstrip(":= -").strip()
+
+            if candidate:
+                return candidate.split()[0]
+
+        return None
+
+    def get_export_message_files(self, message: dict[str, Any]) -> list[str]:
+        files: list[str] = []
+        raw_file = message.get("file")
+        if isinstance(raw_file, str) and raw_file:
+            files.append(raw_file)
+        elif isinstance(raw_file, list):
+            files.extend(item for item in raw_file if isinstance(item, str) and item)
+
+        raw_files = message.get("files")
+        if isinstance(raw_files, list):
+            files.extend(item for item in raw_files if isinstance(item, str) and item)
+
+        return files
+
+    def build_post_password_map(self, channel: ChannelConfig) -> dict[str, str]:
+        export_file = self.downloads_dir / channel.name / self.EXPORT_FILE
+        try:
+            with open(export_file, "r", encoding="utf-8") as handle:
+                export_data = json.load(handle)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return {}
+
+        password_map: dict[str, str] = {}
+        for message in export_data.get("messages", []):
+            if message.get("type") != "message":
+                continue
+
+            files = self.get_export_message_files(message)
+            if not files:
+                continue
+
+            text = self.normalize_export_message_text(
+                message.get("text") or message.get("message") or message.get("caption") or ""
+            )
+            password = self.extract_password_from_post_text(text)
+            if not password:
+                continue
+
+            for filename in files:
+                password_map[filename] = password
+
+        return password_map
 
     def build_export_command(self, channel: ChannelConfig, export_file: Path) -> list[str]:
         return [
@@ -145,6 +228,14 @@ class DownloadMixin(RetryMixin):
         channel: ChannelConfig,
         archive_path: Path,
     ) -> Tuple[Path, bool, Optional[str]]:
+        if channel.uses_post_passwords:
+            password = self.build_post_password_map(channel).get(archive_path.name)
+            if not password:
+                return (archive_path, False, None)
+            if self.extract_single_archive(archive_path, password):
+                return (archive_path, True, password)
+            return (archive_path, False, password)
+
         if self.verbose:
             logger.info("Processing archive %s", archive_path.name)
 
